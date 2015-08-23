@@ -55,8 +55,8 @@ UI_BDF2EDFwindow::UI_BDF2EDFwindow(QWidget *w_parent)
 
   myobjectDialog = new QDialog;
 
-  myobjectDialog->setMinimumSize(QSize(600, 526));
-  myobjectDialog->setMaximumSize(QSize(600, 526));
+  myobjectDialog->setMinimumSize(QSize(650, 526));
+  myobjectDialog->setMaximumSize(QSize(650, 526));
   myobjectDialog->setWindowTitle("BDF+ to EDF+ converter");
   myobjectDialog->setModal(true);
   myobjectDialog->setAttribute(Qt::WA_DeleteOnClose, true);
@@ -65,36 +65,38 @@ UI_BDF2EDFwindow::UI_BDF2EDFwindow(QWidget *w_parent)
   label1->setGeometry(20, 20, 560, 26);
 
   label2 = new QLabel(myobjectDialog);
-  label2->setGeometry(440, 196, 100, 26);
+  label2->setGeometry(490, 196, 100, 26);
   label2->setText("High-pass filter");
 
   label3 = new QLabel(myobjectDialog);
-  label3->setGeometry(440, 300, 100, 26);
+  label3->setGeometry(490, 300, 100, 26);
   label3->setText("Divider");
 
   SignalsTablewidget = new QTableWidget(myobjectDialog);
-  SignalsTablewidget->setGeometry(20, 66, 400, 380);
+  SignalsTablewidget->setGeometry(20, 66, 450, 380);
   SignalsTablewidget->setSelectionMode(QAbstractItemView::NoSelection);
-  SignalsTablewidget->setColumnCount(3);
+  SignalsTablewidget->setColumnCount(4); //4 columns -> labels, HP filter, divide, applyfilter?
   SignalsTablewidget->setColumnWidth(0, 140);
   SignalsTablewidget->setColumnWidth(1, 100);
   SignalsTablewidget->setColumnWidth(2, 100);
+  SignalsTablewidget->setColumnWidth(3, 50);
 
   QStringList horizontallabels;
   horizontallabels += "Label";
   horizontallabels += "HighPassFilter";
   horizontallabels += "Divider";
+  horizontallabels += "Filter?";
   SignalsTablewidget->setHorizontalHeaderLabels(horizontallabels);
 
   spinBox1 = new QDoubleSpinBox(myobjectDialog);
-  spinBox1->setGeometry(440, 232, 100, 26);
+  spinBox1->setGeometry(490, 232, 100, 26);
   spinBox1->setDecimals(3);
   spinBox1->setSuffix(" Hz");
   spinBox1->setRange(0.001, 100.0);
   spinBox1->setValue(0.1);
 
   spinBox2 = new QDoubleSpinBox(myobjectDialog);
-  spinBox2->setGeometry(440, 336, 100, 26);
+  spinBox2->setGeometry(490, 336, 100, 26);
   spinBox2->setDecimals(3);
   spinBox2->setRange(1.0, 256.0);
   spinBox2->setValue(1.0);
@@ -113,12 +115,12 @@ UI_BDF2EDFwindow::UI_BDF2EDFwindow(QWidget *w_parent)
   pushButton3->setEnabled(false);
 
   pushButton4 = new QPushButton(myobjectDialog);
-  pushButton4->setGeometry(QRect(440, 66, 140, 26));
+  pushButton4->setGeometry(QRect(490, 66, 140, 26));
   pushButton4->setText("Select all signals");
   pushButton4->setEnabled(false);
 
   pushButton5 = new QPushButton(myobjectDialog);
-  pushButton5->setGeometry(QRect(440, 118, 140, 26));
+  pushButton5->setGeometry(QRect(490, 118, 140, 26));
   pushButton5->setText("Deselect all signals");
   pushButton5->setEnabled(false);
 
@@ -322,6 +324,10 @@ void UI_BDF2EDFwindow::SelectFileButton()
       ((QDoubleSpinBox *)(SignalsTablewidget->cellWidget(i, 2)))->setDecimals(3);
       ((QDoubleSpinBox *)(SignalsTablewidget->cellWidget(i, 2)))->setRange(1.0, 256.0);
       ((QDoubleSpinBox *)(SignalsTablewidget->cellWidget(i, 2)))->setValue(spinBox2->value());
+
+      //Addition of a checkbox to decide if the filter should be applied
+      SignalsTablewidget->setCellWidget(i, 3, new QCheckBox);
+      ((QCheckBox *)(SignalsTablewidget->cellWidget(i, 3)))->setChecked(true);
     }
     else
     {
@@ -389,9 +395,14 @@ void UI_BDF2EDFwindow::StartConversion()
 
         annotlist[new_edfsignals] = 0;
 
-        filterlist[new_edfsignals] = create_filter(0,
-                                                  ((QDoubleSpinBox *)(SignalsTablewidget->cellWidget(i, 1)))->value(),
-                                                  1.0 / (edfhdr->data_record_duration / edfhdr->edfparam[i].smp_per_record));
+        //If the signal is checked for filtering then prepare filter
+        if(((QCheckBox *)(SignalsTablewidget->cellWidget(i, 3)))->checkState()==Qt::Checked)
+            filterlist[new_edfsignals] = create_filter(0,
+                                                      ((QDoubleSpinBox *)(SignalsTablewidget->cellWidget(i, 1)))->value(),
+                                                      1.0 / (edfhdr->data_record_duration / edfhdr->edfparam[i].smp_per_record));
+        else
+            filterlist[new_edfsignals] = NULL;
+
 
         dividerlist[new_edfsignals] = ((QDoubleSpinBox *)(SignalsTablewidget->cellWidget(i, 2)))->value();
 
@@ -596,7 +607,11 @@ void UI_BDF2EDFwindow::StartConversion()
     }
     else
     {
-      snprintf(scratchpad, 256, "HP:%f", ((QDoubleSpinBox *)(SignalsTablewidget->cellWidget(signalslist[i], 1)))->value());
+      //The HP value is set to zero in the case a filter is not available to the HP filter value otherwise
+      if(filterlist[i] == NULL)
+        snprintf(scratchpad, 256, "HP:%f", 0.0);
+      else
+        snprintf(scratchpad, 256, "HP:%f", ((QDoubleSpinBox *)(SignalsTablewidget->cellWidget(signalslist[i], 1)))->value());
       remove_trailing_zeros(scratchpad);
       strcat(scratchpad, "Hz ");
 
@@ -741,7 +756,9 @@ void UI_BDF2EDFwindow::StartConversion()
 
           var.one_signed += edfhdr->edfparam[signalslist[i]].offset;
 
-          var.one_signed = first_order_filter(var.one_signed, filterlist[i]);
+          //If a filter was created then apply it
+          if(filterlist[i] != NULL)
+            var.one_signed = first_order_filter(var.one_signed, filterlist[i]);
 
           var.one_signed /= dividerlist[i];
 
@@ -779,7 +796,8 @@ END_1:
 
   for(i=0; i<new_edfsignals; i++)
   {
-    free(filterlist[i]);
+    if(filterlist[i] != NULL)
+      free(filterlist[i]);
   }
 
   fclose(inputfile);
